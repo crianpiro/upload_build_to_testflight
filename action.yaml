@@ -5,7 +5,7 @@ branding:
   icon: upload-cloud
 inputs:
   working-directory:
-    description: The root directory of the Flutter app within this repository (used to read pubspec.yaml and the Xcode project for the bundle id and build number)
+    description: Directory the steps run in, and the base for a relative ipa-path. The bundle id and build number are read from the IPA itself, so this need not be a checked-out Flutter project.
     default: ./
   ipa-path:
     description: Path to the pre-built .ipa file to upload (absolute, or relative to working-directory)
@@ -166,16 +166,34 @@ runs:
       env:
         JWT: ${{ steps.asc_jwt.outputs.jwt }}
       run: |
-        # Read bundle ID from the Xcode project
-        BUNDLE_ID=$(grep -r "PRODUCT_BUNDLE_IDENTIFIER" ios/Runner.xcodeproj/project.pbxproj \
-          | head -1 \
-          | sed 's/.*PRODUCT_BUNDLE_IDENTIFIER = \(.*\);/\1/' \
-          | tr -d '[:space:]')
+        # The bundle id and build number identify which build to look up, and
+        # both are read from the IPA being uploaded rather than from the source
+        # tree. The source tree is the wrong authority for two reasons: it
+        # describes what would be built rather than what was, and a workflow
+        # that uploads a prebuilt artifact need not have checked the repository
+        # out at all -- a job that only downloads an IPA has no pubspec.yaml and
+        # no Xcode project to read.
+        #
+        # A caller whose version bump is written during the build but committed
+        # afterwards is the case that makes this concrete: the workspace still
+        # holds the previous build number, so the poll below would hunt a build
+        # that never appears and fail fifteen minutes later.
+        #
+        # The glob matches only the app's own Info.plist; framework and
+        # extension plists sit a level deeper and are excluded.
+        IPA="${{ inputs.ipa-path }}"
+        PLIST="$RUNNER_TEMP/ipa-info.plist"
 
+        if ! unzip -p "$IPA" 'Payload/*.app/Info.plist' > "$PLIST" 2>/dev/null || [ ! -s "$PLIST" ]; then
+          echo "::error::Could not read Payload/*.app/Info.plist out of '$IPA'."
+          exit 1
+        fi
+
+        BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")
         echo "Bundle ID: $BUNDLE_ID"
 
         if [ -z "$BUNDLE_ID" ]; then
-          echo "ERROR: Could not read bundle ID from Xcode project."
+          echo "::error::The IPA's Info.plist has no CFBundleIdentifier."
           exit 1
         fi
 
@@ -197,8 +215,14 @@ runs:
 
         echo "App ID resolved: $APP_ID"
 
-        BUILD_NUMBER=$(grep "^version:" pubspec.yaml \
-          | sed 's/version: [^+]*+//')
+        # CFBundleVersion is the build number, and it is what the App Store
+        # Connect API calls a build's "version".
+        BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")
+
+        if [ -z "$BUILD_NUMBER" ]; then
+          echo "::error::The IPA's Info.plist has no CFBundleVersion."
+          exit 1
+        fi
 
         echo "Looking for build number: $BUILD_NUMBER"
 
