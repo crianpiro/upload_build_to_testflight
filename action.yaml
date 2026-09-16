@@ -122,10 +122,42 @@ runs:
 
         echo "Upload to App Store Connect succeeded."
 
-    - name: Install PyJWT
+    # The App Store Connect API wants an ES256 JWT, which needs PyJWT and
+    # cryptography. They go into a virtualenv under RUNNER_TEMP rather than
+    # into whichever Python happens to answer to pip3.
+    #
+    # `pip3 install --break-system-packages` was wrong in three ways on a
+    # machine that is not a GitHub-hosted image. The flag arrived in pip 23.0,
+    # and the pip3 a Mac resolves is often Xcode's bundled 21.2.4, which
+    # rejects it outright with "no such option". pip3 and python3 need not be
+    # the same installation, so the packages could land somewhere the later
+    # steps do not import from. And the flag exists precisely to let pip write
+    # into an externally managed Python, so every run mutated a shared
+    # interpreter that other tools on the runner also use.
+    #
+    # A virtualenv answers all three: no flag, one interpreter for installing
+    # and importing, and nothing written outside the job's temp directory. pip
+    # is upgraded inside it first, because a virtualenv bootstraps whatever pip
+    # the parent Python carries -- from Xcode's 3.9 that is the same 21.2.4.
+    - name: Install the App Store Connect JWT dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: pip3 install pyjwt cryptography --break-system-packages --quiet
+      run: |
+        set -euo pipefail
+
+        if ! command -v python3 >/dev/null 2>&1; then
+          echo "::error::python3 is required but was not found. On macOS it ships with the Xcode Command Line Tools."
+          exit 1
+        fi
+
+        python3 -m venv "$RUNNER_TEMP/asc-venv"
+        "$RUNNER_TEMP/asc-venv/bin/pip" install --quiet --upgrade pip
+        "$RUNNER_TEMP/asc-venv/bin/pip" install --quiet pyjwt cryptography
+
+        # Used by the next step; the other Python in this action only parses
+        # JSON with the standard library and needs nothing installed.
+        echo "ASC_PYTHON=$RUNNER_TEMP/asc-venv/bin/python" >> "$GITHUB_ENV"
+        echo "[INFO] $("$RUNNER_TEMP/asc-venv/bin/python" --version), $("$RUNNER_TEMP/asc-venv/bin/pip" --version | cut -d' ' -f1-2)"
 
     - name: Generate App Store Connect JWT
       id: asc_jwt
@@ -136,7 +168,7 @@ runs:
         APPLE_API_KEY_ISSUER_ID: ${{ inputs.app-store-connect-api-issuer-id }}
         KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ inputs.app-store-connect-api-key-id }}.p8
       run: |
-        JWT=$(python3 - <<'EOF'
+        JWT=$("$ASC_PYTHON" - <<'EOF'
         import jwt, time, os
 
         key_id   = os.environ["APPLE_API_KEY_ID"]
