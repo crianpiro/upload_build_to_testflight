@@ -38,12 +38,38 @@ inputs:
 runs:
   using: composite
   steps:
+    # xcodebuild, xcrun and `xcode-select -p` all resolve DEVELOPER_DIR ahead of
+    # /var/db/xcode_select_link, so exporting it selects Xcode for every later
+    # step of the job -- the calling workflow's steps included -- exactly as
+    # `xcode-select -s` did, and without needing root.
+    #
+    # `sudo xcode-select -s` required a password on any runner whose account is
+    # not configured with NOPASSWD, which is every self-hosted Mac by default.
+    # The step died there with "sudo: a terminal is required to read the
+    # password", and no runner-side fix survives an OS or runner rebuild.
+    # It also rewrote the active Xcode for the whole machine -- for every other
+    # user and every concurrent job -- to express a choice that belongs to one
+    # build.
+    #
+    # Which Xcode is chosen is deliberately unchanged. `xcode-select -s`
+    # rejected a path that was not an Xcode; the check below keeps that failure
+    # rather than exporting a DEVELOPER_DIR that does not exist.
     - name: Select latest Xcode version
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        latest_xcode=$(ls /Applications | grep '^Xcode' | sort -V | tail -n 1)
-        sudo xcode-select -s /Applications/$latest_xcode
+        # `|| true` because this shell runs with -e -o pipefail: with no Xcode
+        # installed, grep exits 1 and the step would die on this line with no
+        # message at all, instead of reaching the check below.
+        latest_xcode=$(ls /Applications | grep '^Xcode' | sort -V | tail -n 1 || true)
+        developer_dir="/Applications/$latest_xcode/Contents/Developer"
+
+        if [ ! -d "$developer_dir" ]; then
+          echo "❌ No usable Xcode found in /Applications${latest_xcode:+ (looked for '$developer_dir')}"
+          exit 1
+        fi
+
+        echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
         echo "[INFO] Xcode version selected: $latest_xcode"
 
     - name: Create App Store Connect API private key
