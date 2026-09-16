@@ -2,7 +2,7 @@
 
 A composite GitHub Action that uploads a **pre-built iOS `.ipa`** to App Store Connect / TestFlight and finishes the post-upload setup:
 
-1. Selects the latest installed Xcode.
+1. Selects the latest installed Xcode, by exporting `DEVELOPER_DIR` — no `sudo`, and the machine's active Xcode is left alone.
 2. Uploads the IPA with `xcrun altool` using an App Store Connect API key.
 3. Waits for the build to finish processing and appear in App Store Connect.
 4. Optionally posts TestFlight "What's New" release notes.
@@ -26,7 +26,7 @@ A composite GitHub Action that uploads a **pre-built iOS `.ipa`** to App Store C
     uses-non-exempt-encryption: "false"
 ```
 
-The action runs only on **macOS runners** (`runs-on: macos-latest`), since it relies on Xcode / `xcrun altool`.
+The action runs only on **macOS runners**, since it relies on Xcode / `xcrun altool` — hosted (`runs-on: macos-latest`) or self-hosted. It needs no privileges: Xcode is selected through `DEVELOPER_DIR`, so a runner account without passwordless `sudo` works.
 
 ## Inputs
 
@@ -36,7 +36,7 @@ The action runs only on **macOS runners** (`runs-on: macos-latest`), since it re
 | `app-store-connect-api-key-id` | **yes** | — | App Store Connect API key id (the `kid`). |
 | `app-store-connect-api-issuer-id` | **yes** | — | App Store Connect API issuer id. |
 | `app-store-connect-api-key-base64` | **yes** | — | Base64 of the App Store Connect API private key (`.p8` contents). |
-| `working-directory` | no | `./` | Root of the Flutter app. Every step runs here, and it's the base for relative `ipa-path` values. Used to read `pubspec.yaml` (build number) and `ios/Runner.xcodeproj/project.pbxproj` (bundle id). |
+| `working-directory` | no | `./` | Directory every step runs in, and the base for a relative `ipa-path`. The bundle id and build number come from the IPA, so this need not be a checked-out Flutter project. |
 | `release-notes` | no | `""` | TestFlight "What's New" text. Empty skips this step. |
 | `locale` | no | `en-US` | Locale used when creating the beta build localization. |
 | `uses-non-exempt-encryption` | no | `"false"` | Encryption compliance flag. `"false"` for apps using only exempt encryption, `"true"` otherwise. **Empty skips the step** (e.g. when `ITSAppUsesNonExemptEncryption` is declared in `Info.plist`). |
@@ -45,7 +45,20 @@ This action has no outputs.
 
 ### How the build is matched
 
-After upload, the action resolves the app by the **bundle id** read from `ios/Runner.xcodeproj/project.pbxproj`, then polls for the build whose version equals the **build number** read from `pubspec.yaml` (the value after `+`, e.g. `1` in `version: 1.0.0+1`). It retries for up to ~15 minutes (30 × 30s) while App Store Connect processes the upload.
+Uploading needs nothing but the file. The identifiers below are for what comes after: once App Store Connect has processed the binary, the action has to find *that* build in order to post release notes to it and set its encryption compliance.
+
+Both are read from the IPA's own `Payload/*.app/Info.plist`:
+
+| Read from the IPA | Used for |
+| --- | --- |
+| `CFBundleIdentifier` | resolving the numeric app id via `/v1/apps?filter[bundleId]=` |
+| `CFBundleVersion` | picking this build out of that app's builds — confusingly, a build's `version` in the App Store Connect API *is* its build number |
+
+Taking them from the artifact rather than the source tree matters for two reasons. The source tree describes what *would* be built rather than what was; and a job that only downloads a prebuilt IPA has no `pubspec.yaml` and no Xcode project to read, so nothing needs checking out to use this action.
+
+The case where the difference bites: a workflow that writes the version bump into the build job's workspace and commits it only after distribution. A checkout in the upload job then holds the *previous* build number, and the poll below hunts a build that never appears — failing fifteen minutes later with a timeout rather than naming the mismatch.
+
+It retries for up to ~15 minutes (30 × 30s) while App Store Connect processes the upload.
 
 ## Creating the App Store Connect API key
 
