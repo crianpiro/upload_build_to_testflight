@@ -47,12 +47,13 @@ This action has no outputs.
 
 Uploading needs nothing but the file. The identifiers below are for what comes after: once App Store Connect has processed the binary, the action has to find *that* build in order to post release notes to it and set its encryption compliance.
 
-Both are read from the IPA's own `Payload/*.app/Info.plist`:
+All three are read from the IPA's own `Payload/*.app/Info.plist`:
 
 | Read from the IPA | Used for |
 | --- | --- |
-| `CFBundleIdentifier` | resolving the numeric app id via `/v1/apps?filter[bundleId]=` |
+| `CFBundleIdentifier` | resolving the numeric app id via `/v1/apps?filter[bundleId]=`, keeping only the app whose bundle id matches exactly (the filter also returns `….staging` and the like) |
 | `CFBundleVersion` | picking this build out of that app's builds — confusingly, a build's `version` in the App Store Connect API *is* its build number |
+| `CFBundleShortVersionString` | telling apart builds that share a number: App Store Connect accepts the same build number again under another version, so 1.3.0 (202) can follow 1.2.25 (202). It filters on the build's `preReleaseVersion.version` |
 
 Taking them from the artifact rather than the source tree matters for two reasons. The source tree describes what *would* be built rather than what was; and a job that only downloads a prebuilt IPA has no `pubspec.yaml` and no Xcode project to read, so nothing needs checking out to use this action.
 
