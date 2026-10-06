@@ -237,13 +237,23 @@ runs:
 
         echo "App lookup response: $APP_RESPONSE"
 
-        APP_ID=$(echo "$APP_RESPONSE" | python3 -c \
-          "import sys,json
-        d=json.load(sys.stdin)
-        if not d.get('data'):
-            print('ERROR: No app found. Check bundle ID and API key permissions.', file=sys.stderr)
+        # filter[bundleId] is not an exact match: asking for com.example.app
+        # also returns com.example.app.staging, and in no guaranteed order.
+        # Taking the first result looked for the build in the wrong app and
+        # timed out fifteen minutes later, so the app is picked by its exact
+        # bundle id instead.
+        APP_ID=$(printf '%s' "$APP_RESPONSE" | python3 -c '
+        import json, sys
+        bundle_id = sys.argv[1]
+        apps = json.load(sys.stdin).get("data") or []
+        matches = [a["id"] for a in apps if a.get("attributes", {}).get("bundleId") == bundle_id]
+        if not matches:
+            found = ", ".join(a.get("attributes", {}).get("bundleId", "?") for a in apps) or "none"
+            print(f"ERROR: No app with bundle id {bundle_id}; App Store Connect returned: {found}. "
+                  "Check the bundle ID and the API key permissions.", file=sys.stderr)
             sys.exit(1)
-        print(d['data'][0]['id'])")
+        print(matches[0])
+        ' "$BUNDLE_ID")
 
         echo "App ID resolved: $APP_ID"
 
