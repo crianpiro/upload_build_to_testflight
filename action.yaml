@@ -266,12 +266,26 @@ runs:
           exit 1
         fi
 
-        echo "Looking for build number: $BUILD_NUMBER"
+        # The build number alone does not identify a build: App Store Connect
+        # accepts the same number again under a different version, so 1.3.0
+        # (202) can follow an earlier 1.2.25 (202). Looked up by number only,
+        # the earlier build -- already processed -- answers first, and its
+        # release notes and compliance get set instead of this one's. The
+        # version (CFBundleShortVersionString) is what the API calls the
+        # build's pre-release version, and pins it down.
+        VERSION_STRING=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+
+        if [ -z "$VERSION_STRING" ]; then
+          echo "::error::The IPA's Info.plist has no CFBundleShortVersionString."
+          exit 1
+        fi
+
+        echo "Looking for version $VERSION_STRING, build number $BUILD_NUMBER"
 
         BUILD_ID=""
         for i in $(seq 1 30); do
           RESPONSE=$(curl -s -g \
-            "https://api.appstoreconnect.apple.com/v1/builds?filter[app]=$APP_ID&filter[version]=$BUILD_NUMBER&limit=1" \
+            "https://api.appstoreconnect.apple.com/v1/builds?filter[app]=$APP_ID&filter[version]=$BUILD_NUMBER&filter[preReleaseVersion.version]=$VERSION_STRING&limit=1" \
             -H "Authorization: Bearer $JWT")
 
           echo "Build lookup attempt $i response: $RESPONSE"
