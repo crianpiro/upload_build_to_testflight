@@ -383,6 +383,40 @@ runs:
           exit 1
         fi
 
+        # The build's current answer: true, false, or null when unanswered.
+        # App Store Connect fills it in itself when the app's Info.plist
+        # declares ITSAppUsesNonExemptEncryption, and then refuses any update
+        # ("You cannot update when the value is already set").
+        current_answer() {
+          curl -s \
+            "https://api.appstoreconnect.apple.com/v1/builds/$BUILD_ID?fields%5Bbuilds%5D=usesNonExemptEncryption" \
+            -H "Authorization: Bearer $JWT" \
+          | python3 -c \
+            "import sys,json
+        try:
+            v=json.load(sys.stdin)['data']['attributes'].get('usesNonExemptEncryption')
+        except Exception:
+            v=None
+        print('null' if v is None else str(v).lower())
+        " 2>/dev/null || echo null
+        }
+
+        # A build already answered the same way is done; one answered the
+        # other way means Info.plist and this input disagree, which only the
+        # app's owner can settle.
+        check_answer() {
+          if [ "$1" = "$USES_NON_EXEMPT_ENCRYPTION" ]; then
+            echo "Encryption compliance is already set to $1 (from the app's Info.plist); nothing to do."
+            exit 0
+          fi
+          if [ "$1" != "null" ]; then
+            echo "ERROR: The build's encryption compliance is already $1, but uses-non-exempt-encryption is $USES_NON_EXEMPT_ENCRYPTION. Make ITSAppUsesNonExemptEncryption in Info.plist and this input agree, or leave the input empty."
+            exit 1
+          fi
+        }
+
+        check_answer "$(current_answer)"
+
         echo "Setting encryption compliance (usesNonExemptEncryption=$USES_NON_EXEMPT_ENCRYPTION) for build: $BUILD_ID"
 
         RESPONSE=$(curl -s -X PATCH \
@@ -411,6 +445,9 @@ runs:
         " 2>/dev/null || true)
 
         if [ -n "$ERROR" ]; then
+          # App Store Connect may have filled the answer in between the read
+          # and the update.
+          check_answer "$(current_answer)"
           echo "ERROR: Failed to set encryption compliance: $ERROR"
           exit 1
         fi
