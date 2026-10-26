@@ -39,7 +39,7 @@ The action runs only on **macOS runners**, since it relies on Xcode / `xcrun alt
 | `working-directory` | no | `./` | Directory every step runs in, and the base for a relative `ipa-path`. The bundle id and build number come from the IPA, so this need not be a checked-out Flutter project. |
 | `release-notes` | no | `""` | TestFlight "What's New" text. Empty skips this step. |
 | `locale` | no | `en-US` | Locale used when creating the beta build localization. |
-| `uses-non-exempt-encryption` | no | `"false"` | Encryption compliance flag. `"false"` for apps using only exempt encryption, `"true"` otherwise. **Empty skips the step** (e.g. when `ITSAppUsesNonExemptEncryption` is declared in `Info.plist`). |
+| `uses-non-exempt-encryption` | no | `"false"` | Encryption compliance flag. `"false"` for apps using only exempt encryption, `"true"` otherwise. **Empty skips the step.** A build already answered the same way (App Store Connect fills it in when `Info.plist` declares `ITSAppUsesNonExemptEncryption`) is left as it is; one answered the other way fails the step. |
 
 This action has no outputs.
 
